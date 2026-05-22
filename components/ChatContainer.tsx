@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Send,
   Clock,
@@ -56,11 +56,12 @@ export interface Message {
   text: string;
   timestamp: number;
   read: boolean;
-  selfDestructDuration?: number; // in seconds
-  destructTimeRemaining?: number; // in seconds
+  selfDestructDuration?: number;
+  destructTimeRemaining?: number;
+  reactions?: Record<string, string>; // emoji -> "me" | "peer"
   media?: {
     type: "image" | "audio" | "file";
-    content: string; // base64 data url
+    content: string;
     fileName?: string;
     fileSize?: number;
   };
@@ -94,6 +95,13 @@ interface ChatContainerProps {
   peerNickname?: string;
   activePeers?: Record<string, string>;
   typingPeers?: Record<string, string>;
+
+  // Reactions:
+  inboundReaction?: { senderId: string; messageId: string; encryptedEmoji: string; iv: string } | null;
+  onSendReaction?: (messageId: string, encryptedEmoji: string, iv: string) => void;
+  cryptoKey?: CryptoKey | null;
+  encryptMessage?: (text: string, key: CryptoKey) => Promise<{ ciphertext: string; iv: string }>;
+  decryptMessage?: (ciphertext: string, iv: string, key: CryptoKey) => Promise<string>;
 }
 
 const SELF_DESTRUCT_OPTIONS = [
@@ -285,9 +293,163 @@ export default function ChatContainer({
   myNickname,
   peerNickname,
   activePeers = {},
-  typingPeers = {}
+  typingPeers = {},
+  inboundReaction,
+  onSendReaction,
+  cryptoKey,
+  encryptMessage,
+  decryptMessage,
 }: ChatContainerProps) {
   const isPublicLobby = PUBLIC_LOBBIES.includes((roomId || "").toUpperCase());
+
+  // ─── Feature 1: Sound Effects (Web Audio API, zero downloads) ───────────────
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+
+  const getAudioCtx = useCallback(() => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    return audioCtxRef.current;
+  }, []);
+
+  const playSend = useCallback(() => {
+    if (!soundEnabled) return;
+    try {
+      const ctx = getAudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.08);
+      gain.gain.setValueAtTime(0.06, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+      osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.15);
+    } catch (_) {}
+  }, [soundEnabled, getAudioCtx]);
+
+  const playReceive = useCallback(() => {
+    if (!soundEnabled) return;
+    try {
+      const ctx = getAudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(660, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.07);
+      gain.gain.setValueAtTime(0.05, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+      osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.12);
+    } catch (_) {}
+  }, [soundEnabled, getAudioCtx]);
+
+  const playReaction = useCallback(() => {
+    if (!soundEnabled) return;
+    try {
+      const ctx = getAudioCtx();
+      [0, 0.06, 0.12].forEach((delay, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.value = 660 + i * 220;
+        gain.gain.setValueAtTime(0.04, ctx.currentTime + delay);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.1);
+        osc.start(ctx.currentTime + delay); osc.stop(ctx.currentTime + delay + 0.1);
+      });
+    } catch (_) {}
+  }, [soundEnabled, getAudioCtx]);
+
+  // ─── Feature 2: E2EE Message Reactions ────────────────────────────────────
+  const [messageReactions, setMessageReactions] = useState<Record<string, Record<string, string>>>({});
+  const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
+  const REACTION_EMOJIS = ["👍", "❤️", "😂", "🔥", "😮", "👏"];
+
+  const handleSendReaction = useCallback(async (messageId: string, emoji: string) => {
+    if (!onSendReaction || !cryptoKey || !encryptMessage) return;
+    try {
+      const { ciphertext, iv } = await encryptMessage(emoji, cryptoKey);
+      onSendReaction(messageId, ciphertext, iv);
+      setMessageReactions(prev => ({
+        ...prev,
+        [messageId]: { ...(prev[messageId] || {}), [emoji]: "me" }
+      }));
+      playReaction();
+    } catch (_) {}
+  }, [onSendReaction, cryptoKey, encryptMessage, playReaction]);
+
+  // Listen for inbound reactions and decrypt them
+  useEffect(() => {
+    if (!inboundReaction || !cryptoKey || !decryptMessage) return;
+    const { messageId, encryptedEmoji, iv } = inboundReaction;
+    decryptMessage(encryptedEmoji, iv, cryptoKey).then(emoji => {
+      setMessageReactions(prev => ({
+        ...prev,
+        [messageId]: { ...(prev[messageId] || {}), [emoji]: "peer" }
+      }));
+      playReaction();
+    }).catch(() => {});
+  }, [inboundReaction, cryptoKey, decryptMessage, playReaction]);
+
+  // Play sound for each new peer message (track last message)
+  const lastMsgCountRef = useRef(0);
+  useEffect(() => {
+    const peerMsgs = messages.filter(m => m.sender === "peer");
+    if (peerMsgs.length > lastMsgCountRef.current) {
+      playReceive();
+      lastMsgCountRef.current = peerMsgs.length;
+    }
+  }, [messages, playReceive]);
+
+  // ─── Feature 3: Matrix Background Toggle ──────────────────────────────────
+  const [matrixEnabled, setMatrixEnabled] = useState(false);
+  const matrixCanvasRef = useRef<HTMLCanvasElement>(null);
+  const matrixAnimRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const canvas = matrixCanvasRef.current;
+    if (!canvas || !matrixEnabled) {
+      if (matrixAnimRef.current) cancelAnimationFrame(matrixAnimRef.current);
+      return;
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const resize = () => {
+      canvas.width = canvas.offsetWidth;
+      canvas.height = canvas.offsetHeight;
+    };
+    resize();
+    window.addEventListener("resize", resize);
+
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*<>/\\|!?~".split("");
+    const fontSize = 11;
+    const cols = Math.floor(canvas.width / fontSize);
+    const drops = Array(cols).fill(1);
+
+    const draw = () => {
+      ctx.fillStyle = "rgba(3,7,18,0.08)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "rgba(16,185,129,0.65)";
+      ctx.font = `${fontSize}px monospace`;
+      drops.forEach((y, i) => {
+        const char = chars[Math.floor(Math.random() * chars.length)];
+        ctx.fillText(char, i * fontSize, y * fontSize);
+        if (y * fontSize > canvas.height && Math.random() > 0.975) drops[i] = 0;
+        drops[i]++;
+      });
+      matrixAnimRef.current = requestAnimationFrame(draw);
+    };
+    draw();
+
+    return () => {
+      cancelAnimationFrame(matrixAnimRef.current!);
+      window.removeEventListener("resize", resize);
+    };
+  }, [matrixEnabled]);
+
 
   const getTypingText = () => {
     if (!typingPeers || Object.keys(typingPeers).length === 0) return null;
@@ -360,6 +522,7 @@ export default function ChatContainer({
     if (!inputText.trim()) return;
 
     onSendMessage(inputText, selfDestructDuration);
+    playSend();
     setInputText("");
     
     // Stop typing state immediately on send
@@ -570,6 +733,35 @@ export default function ChatContainer({
               </button>
             </div>
           )}
+
+          {/* Matrix background toggle */}
+          <button
+            type="button"
+            onClick={() => setMatrixEnabled(v => !v)}
+            title={matrixEnabled ? "Disable Matrix Mode" : "Enable Matrix Mode"}
+            className={`px-2.5 py-1.5 rounded-full border text-[10px] font-mono font-bold transition-all cursor-pointer active:scale-95 ${
+              matrixEnabled
+                ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.2)]"
+                : "bg-white/[0.03] border-white/5 text-slate-500 hover:text-slate-300 hover:bg-white/5"
+            }`}
+          >
+            {matrixEnabled ? "◼ MATRIX" : "◻ MATRIX"}
+          </button>
+
+          {/* Sound toggle */}
+          <button
+            type="button"
+            onClick={() => setSoundEnabled(v => !v)}
+            title={soundEnabled ? "Mute sounds" : "Enable sounds"}
+            className={`px-2.5 py-1.5 rounded-full border text-[10px] font-mono font-bold transition-all cursor-pointer active:scale-95 ${
+              soundEnabled
+                ? "bg-white/[0.03] border-white/5 text-slate-300 hover:bg-white/5"
+                : "bg-white/[0.02] border-white/5 text-slate-600 hover:text-slate-400"
+            }`}
+          >
+            {soundEnabled ? "♪ ON" : "♪ OFF"}
+          </button>
+
           <button
             onClick={onOpenShare}
             className="px-3.5 py-1.5 rounded-full bg-white/5 border border-white/5 text-xs text-slate-200 hover:text-white hover:bg-white/10 hover:border-white/10 transition-all font-medium cursor-pointer shadow-sm active:scale-95"
@@ -593,6 +785,14 @@ export default function ChatContainer({
           backgroundImage: `radial-gradient(circle at 50% -20%, rgba(16, 185, 129, 0.03), transparent 50%), url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23ffffff' fill-opacity='0.012'%3E%3Cpath d='M0 0h40v40H0V0zm40 40h40v40H40V40zm0-40h2v2h-2V0zm0 4h2v2h-2V4zm0 4h2v2h-2V8zm0 12h2v2h-2v-2zm0 12h2v2h-2v-2zm0 24h2v2h-2v-2zm0 12h2v2h-2v-2zm4-68h2v2h-2v-2zm8 0h2v2h-2v-2zm12 0h2v2h-2v-2zm12 0h2v2h-2v-2zm8 0h2v2h-2v-2zm-60 8h2v2h-2V8zm0 8h2v2h-2v-2zm0 12h2v2h-2v-2zm0 16h2v2h-2v-2zm0 12h2v2h-2v-2zm0 8h2v2h-2v-2zm8 32h2v2h-2v-2zm16 0h2v2h-2v-2zm16 0h2v2h-2v-2zm16 0h2v2h-2v-2z'/%3E%3C/g%3E%3C/svg%3E")`
         }}
       >
+        {/* Matrix rain canvas — sits at z-0 behind messages */}
+        {matrixEnabled && (
+          <canvas
+            ref={matrixCanvasRef}
+            className="absolute inset-0 w-full h-full z-0 pointer-events-none opacity-40"
+          />
+        )}
+
         {messages.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-6 select-none relative z-10">
             <div className="w-12 h-12 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-center text-slate-400 mb-4 shadow-inner">
@@ -632,8 +832,14 @@ export default function ChatContainer({
                   key={msg.id}
                   initial={{ opacity: 0, y: 10, scale: 0.98 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  className={`flex relative z-10 ${isMe ? "justify-end" : "justify-start"}`}
+                  exit={msg.selfDestructDuration !== undefined
+                    ? { opacity: 0, scale: 0.5, filter: "blur(8px)", y: -10 }
+                    : { opacity: 0, scale: 0.95 }
+                  }
+                  transition={{ duration: msg.selfDestructDuration !== undefined ? 0.5 : 0.15, ease: "easeOut" }}
+                  className={`flex relative z-10 group ${isMe ? "justify-end" : "justify-start"}`}
+                  onMouseEnter={() => setHoveredMsgId(msg.id)}
+                  onMouseLeave={() => setHoveredMsgId(null)}
                 >
                   {/* Tailored Premium Glassmorphic Bubbles */}
                   <div
@@ -738,6 +944,52 @@ export default function ChatContainer({
                       )}
                     </div>
                   </div>
+
+                  {/* E2EE Reaction Popover (appears on hover) */}
+                  <AnimatePresence>
+                    {hoveredMsgId === msg.id && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.8, y: 4 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.8, y: 4 }}
+                        transition={{ duration: 0.12 }}
+                        className={`absolute ${isMe ? "right-0" : "left-0"} -bottom-8 z-20 flex items-center gap-0.5 px-2 py-1 rounded-full bg-[#0a0f1c]/95 border border-white/10 backdrop-blur-xl shadow-2xl`}
+                      >
+                        {REACTION_EMOJIS.map(emoji => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            onClick={() => handleSendReaction(msg.id, emoji)}
+                            className="text-base hover:scale-125 transition-transform cursor-pointer px-0.5 leading-none"
+                            title={`React with ${emoji}`}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Rendered reactions strip below the bubble */}
+                  {messageReactions[msg.id] && Object.keys(messageReactions[msg.id]).length > 0 && (
+                    <div className={`absolute -bottom-5 flex gap-0.5 ${isMe ? "right-2" : "left-2"} z-10`}>
+                      {Object.entries(messageReactions[msg.id]).map(([emoji, sender]) => (
+                        <motion.span
+                          key={emoji}
+                          initial={{ scale: 0 }}
+                          animate={{ scale: 1 }}
+                          className={`text-xs px-1.5 py-0.5 rounded-full border text-[11px] leading-none ${
+                            sender === "me"
+                              ? "bg-emerald-500/10 border-emerald-500/20"
+                              : "bg-slate-800/80 border-slate-700/40"
+                          }`}
+                        >
+                          {emoji}
+                        </motion.span>
+                      ))}
+                    </div>
+                  )}
+
                 </motion.div>
               );
             })}

@@ -38,6 +38,7 @@ export function useSocket(
   const [inboundMessage, setInboundMessage] = useState<EncryptedMessagePayload | null>(null);
   const [readReceiptMsgId, setReadReceiptMsgId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [inboundReaction, setInboundReaction] = useState<{ senderId: string; messageId: string; encryptedEmoji: string; iv: string } | null>(null);
 
   const onWebRTCSignalRef = useRef(onWebRTCSignal);
   const onPeerJoinedRef = useRef(onPeerJoined);
@@ -153,6 +154,10 @@ export function useSocket(
       setReadReceiptMsgId(messageId);
     });
 
+    socket.on("message-reaction", (payload: { senderId: string; messageId: string; encryptedEmoji: string; iv: string }) => {
+      setInboundReaction(payload);
+    });
+
     socket.on("webrtc-signal", (payload: { senderId: string; signal: any }) => {
       console.log("[SOCKET] webrtc-signal received:", payload);
       if (onWebRTCSignalRef.current) {
@@ -256,6 +261,14 @@ export function useSocket(
     socketRef.current.emit("webrtc-signal", { roomId, signal });
   }, [roomId]);
 
+  /**
+   * Sends an encrypted emoji reaction for a specific message.
+   */
+  const sendReaction = useCallback((messageId: string, encryptedEmoji: string, iv: string) => {
+    if (!socketRef.current || !roomId) return;
+    socketRef.current.emit("send-reaction", { roomId, messageId, encryptedEmoji, iv });
+  }, [roomId]);
+
   return {
     connectionState,
     isPeerTyping,
@@ -264,12 +277,14 @@ export function useSocket(
     activePeers: peers,
     typingPeers,
     inboundMessage,
+    inboundReaction,
     readReceiptMsgId,
     errorMessage,
     sendEncryptedMessage,
     sendTypingState,
     sendReadReceipt,
     sendWebRTCSignal,
+    sendReaction,
     leaveRoom,
   };
 }

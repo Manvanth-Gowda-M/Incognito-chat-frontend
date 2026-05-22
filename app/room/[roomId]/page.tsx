@@ -101,12 +101,14 @@ export default function RoomPage() {
     activePeers,
     typingPeers,
     inboundMessage,
+    inboundReaction,
     readReceiptMsgId,
     errorMessage,
     sendEncryptedMessage,
     sendTypingState,
     sendReadReceipt,
     sendWebRTCSignal,
+    sendReaction,
     leaveRoom
   } = useSocket(roomId, nickname, onWebRTCSignal, handlePeerJoined, handlePeerLeft);
 
@@ -940,6 +942,11 @@ export default function RoomPage() {
         peerNickname={peerNickname || undefined}
         activePeers={activePeers}
         typingPeers={typingPeers}
+        inboundReaction={inboundReaction}
+        onSendReaction={sendReaction}
+        cryptoKey={cryptoKey}
+        encryptMessage={encryptMessage}
+        decryptMessage={decryptMessage}
       />
 
       {/* QR Code modal popover */}
