@@ -15,6 +15,46 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+  /* Prevent iOS overscroll bounce which breaks layout */
+  overscroll-behavior: none;
+  /* Prevent text size adjustment on iOS orientation change */
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Mobile dynamic viewport height — shrinks correctly when keyboard opens */
+:root {
+  --dvh: 1dvh;
+}
+
+/* Full-screen chat shell: uses dynamic viewport height on mobile */
+.chat-shell {
+  /* Fallback for browsers without dvh support */
+  height: 100vh;
+  /* Modern: shrinks when keyboard opens on iOS/Android */
+  height: 100dvh;
+  /* JS-driven: updated via visualViewport resize event */
+  height: calc(var(--dvh, 1dvh) * 100);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: fixed;
+  inset: 0;
+  background: #030712;
+}
+
+/* The message feed stretches to fill remaining space */
+.chat-feed {
+  flex: 1 1 0%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Input bar: always above keyboard, respects iOS safe area */
+.chat-input-bar {
+  flex-shrink: 0;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
 }
 
 /* Glassmorphism Design System Utilities */

@@ -915,7 +915,8 @@ export default function RoomPage() {
 
   // State E: Fully connected, exactly 2 clients synced and talking
   return (
-    <div className="min-h-screen flex flex-col justify-center max-w-4xl w-full mx-auto p-4 md:p-6 bg-[#030712]">
+    <div className="chat-shell md:static md:h-auto md:min-h-screen md:flex md:items-center md:justify-center md:p-4 bg-[#030712]">
+      <div className="w-full h-full md:max-w-4xl md:h-auto flex flex-col">
       <ChatContainer
         messages={messages}
         onSendMessage={handleSendMessage}
@@ -955,6 +956,7 @@ export default function RoomPage() {
         onClose={() => setIsShareOpen(false)}
         joinUrl={absoluteJoinUrl}
       />
+      </div>
     </div>
   );
 }

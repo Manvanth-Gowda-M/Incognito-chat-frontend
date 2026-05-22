@@ -490,10 +490,41 @@ export default function ChatContainer({
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Auto-scroll to bottom of messages
+  // Auto-scroll to bottom of messages (smooth on mobile too)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = messagesEndRef.current;
+    if (el) {
+      setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "end" }), 60);
+    }
   }, [messages, isPeerTyping]);
+
+  // ─── Mobile Keyboard Fix: update --dvh via visualViewport ─────────────────
+  useEffect(() => {
+    const setVh = () => {
+      const vp = window.visualViewport;
+      const h = vp ? vp.height : window.innerHeight;
+      document.documentElement.style.setProperty("--dvh", `${h * 0.01}px`);
+      // After keyboard appears, scroll messages into view
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      }, 100);
+    };
+
+    setVh();
+    const vp = window.visualViewport;
+    if (vp) {
+      vp.addEventListener("resize", setVh);
+      vp.addEventListener("scroll", setVh);
+    }
+    window.addEventListener("resize", setVh);
+    return () => {
+      if (vp) {
+        vp.removeEventListener("resize", setVh);
+        vp.removeEventListener("scroll", setVh);
+      }
+      window.removeEventListener("resize", setVh);
+    };
+  }, []);
 
   // Cleanup timers on unmount
   useEffect(() => {
@@ -670,116 +701,106 @@ export default function ChatContainer({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full max-h-[85vh] rounded-2xl glass-panel overflow-hidden border border-white/10 shadow-2xl relative">
-      {/* Top Header Panel */}
-      <div className="flex items-center justify-between px-6 py-4 bg-white/[0.02] border-b border-white/5">
-        <div className="flex items-center gap-3">
-          {/* Dynamic Active Avatar with status pulsing halo */}
+    <div className="flex flex-col h-full w-full md:rounded-2xl glass-panel md:overflow-hidden md:border md:border-white/10 md:shadow-2xl relative md:max-h-[85vh]">
+      {/* Top Header Panel — compact on mobile */}
+      <div className="flex items-center justify-between px-3 sm:px-5 py-3 bg-white/[0.02] border-b border-white/5 shrink-0 gap-2">
+        <div className="flex items-center gap-2.5 min-w-0">
+          {/* Dynamic Active Avatar */}
           <div className="relative shrink-0">
-            <div className={`w-9 h-9 rounded-full bg-gradient-to-tr from-slate-900 to-slate-800 border-2 flex items-center justify-center text-slate-300 shadow-md transition-all duration-500 ${
+            <div className={`w-8 h-8 rounded-full bg-gradient-to-tr from-slate-900 to-slate-800 border-2 flex items-center justify-center text-slate-300 shadow-md transition-all duration-500 ${
               connectionState === "ready" 
-                ? "border-emerald-500/60 shadow-[0_0_12px_rgba(16,185,129,0.15)] animate-[pulse_2s_infinite]" 
-                : "border-amber-500/60 shadow-[0_0_12px_rgba(245,158,11,0.15)] animate-[pulse_2s_infinite]"
+                ? "border-emerald-500/60 shadow-[0_0_12px_rgba(16,185,129,0.15)]" 
+                : "border-amber-500/60 shadow-[0_0_12px_rgba(245,158,11,0.15)]"
             }`}>
-              <Shield size={16} className={connectionState === "ready" ? "text-emerald-400" : "text-amber-400"} />
+              <Shield size={14} className={connectionState === "ready" ? "text-emerald-400" : "text-amber-400"} />
             </div>
-            {/* Small active status dot at bottom-right of avatar */}
-            <span className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border border-[#090d16] ${
+            <span className={`absolute bottom-0 right-0 w-2 h-2 rounded-full border border-[#090d16] ${
               connectionState === "ready" ? "bg-emerald-500" : "bg-amber-500"
             }`} />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-white tracking-wide truncate max-w-[120px] md:max-w-[200px]">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <h2 className="text-sm font-semibold text-white tracking-wide truncate max-w-[100px] sm:max-w-[180px]">
                 {isPublicLobby ? roomId.toUpperCase().replace("-", " ") : (peerNickname || "Secure Partner")}
               </h2>
-              {/* Connection status pill */}
-              {isPublicLobby ? (
-                <div className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[9px] text-emerald-400 hidden sm:inline-flex items-center gap-1 font-mono">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  {Object.keys(activePeers).length + 1} online
-                </div>
-              ) : (
-                <div className="px-2 py-0.5 rounded-full bg-white/5 border border-white/5 text-[9px] text-gray-400 capitalize hidden sm:inline-flex items-center gap-1 font-mono">
-                  <span className={`w-1 h-1 rounded-full ${connectionState === "ready" ? "bg-emerald-500" : "bg-amber-500"}`} />
-                  {connectionState === "ready" ? "secure" : connectionState}
-                </div>
-              )}
             </div>
-            <p className="text-[10px] text-emerald-400/80 font-medium tracking-wider mt-0.5 uppercase">Room: {roomId}</p>
+            <p className="text-[9px] text-emerald-400/70 font-medium tracking-widest uppercase truncate max-w-[120px] sm:max-w-[200px]">Room: {roomId}</p>
           </div>
         </div>
 
-        {/* Action button cluster */}
-        <div className="flex items-center gap-2.5">
+        {/* Action button cluster — compact on mobile */}
+        <div className="flex items-center gap-1.5 shrink-0">
           {connectionState === "ready" && !isPublicLobby && (
-            <div className="flex items-center bg-white/[0.03] border border-white/5 rounded-full p-1 shadow-inner gap-0.5">
+            <div className="flex items-center bg-white/[0.03] border border-white/5 rounded-full p-1 shadow-inner gap-0">
               <button
                 type="button"
                 onClick={() => onInitiateCall("audio")}
-                className="p-2 rounded-full text-slate-400 hover:text-white hover:bg-white/5 transition-all flex items-center justify-center cursor-pointer"
+                className="p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-white/5 transition-all flex items-center justify-center cursor-pointer"
                 title="Voice Call"
               >
-                <Phone size={14} />
+                <Phone size={13} />
               </button>
-              <div className="w-[1px] h-3.5 bg-white/10" />
+              <div className="w-[1px] h-3 bg-white/10" />
               <button
                 type="button"
                 onClick={() => onInitiateCall("video")}
-                className="p-2 rounded-full text-slate-400 hover:text-white hover:bg-white/5 transition-all flex items-center justify-center cursor-pointer"
+                className="p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-white/5 transition-all flex items-center justify-center cursor-pointer"
                 title="Video Call"
               >
-                <Video size={14} />
+                <Video size={13} />
               </button>
             </div>
           )}
 
-          {/* Matrix background toggle */}
+          {/* Matrix toggle — icon on mobile, text on sm+ */}
           <button
             type="button"
             onClick={() => setMatrixEnabled(v => !v)}
-            title={matrixEnabled ? "Disable Matrix Mode" : "Enable Matrix Mode"}
-            className={`px-2.5 py-1.5 rounded-full border text-[10px] font-mono font-bold transition-all cursor-pointer active:scale-95 ${
+            title={matrixEnabled ? "Disable Matrix" : "Enable Matrix"}
+            className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-full border transition-all cursor-pointer active:scale-95 ${
               matrixEnabled
-                ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.2)]"
+                ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"
                 : "bg-white/[0.03] border-white/5 text-slate-500 hover:text-slate-300 hover:bg-white/5"
             }`}
           >
-            {matrixEnabled ? "◼ MATRIX" : "◻ MATRIX"}
+            <span className="hidden sm:inline text-[10px] font-mono font-bold">{matrixEnabled ? "◼ MATRIX" : "◻ MATRIX"}</span>
+            <span className="sm:hidden text-[11px] font-mono font-bold">{matrixEnabled ? "◼" : "◻"}</span>
           </button>
 
           {/* Sound toggle */}
           <button
             type="button"
             onClick={() => setSoundEnabled(v => !v)}
-            title={soundEnabled ? "Mute sounds" : "Enable sounds"}
-            className={`px-2.5 py-1.5 rounded-full border text-[10px] font-mono font-bold transition-all cursor-pointer active:scale-95 ${
+            title={soundEnabled ? "Mute" : "Unmute"}
+            className={`p-1.5 rounded-full border transition-all cursor-pointer active:scale-95 ${
               soundEnabled
                 ? "bg-white/[0.03] border-white/5 text-slate-300 hover:bg-white/5"
                 : "bg-white/[0.02] border-white/5 text-slate-600 hover:text-slate-400"
             }`}
           >
-            {soundEnabled ? "♪ ON" : "♪ OFF"}
+            <span className="text-[13px] leading-none">{soundEnabled ? "🔊" : "🔇"}</span>
           </button>
 
           <button
             onClick={onOpenShare}
-            className="px-3.5 py-1.5 rounded-full bg-white/5 border border-white/5 text-xs text-slate-200 hover:text-white hover:bg-white/10 hover:border-white/10 transition-all font-medium cursor-pointer shadow-sm active:scale-95"
+            className="px-2.5 py-1.5 rounded-full bg-white/5 border border-white/5 text-[11px] text-slate-200 hover:text-white hover:bg-white/10 transition-all font-medium cursor-pointer active:scale-95"
           >
-            Invite
+            <span className="hidden sm:inline">Invite</span>
+            <span className="sm:hidden text-[13px]">📎</span>
           </button>
           <button
             onClick={onLeaveRoom}
-            className="px-3.5 py-1.5 rounded-full bg-red-500/10 border border-red-500/20 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/20 transition-all font-medium cursor-pointer shadow-sm active:scale-95"
+            className="px-2.5 py-1.5 rounded-full bg-red-500/10 border border-red-500/20 text-[11px] text-red-400 hover:text-red-300 hover:bg-red-500/20 transition-all font-medium cursor-pointer active:scale-95"
           >
-            Leave
+            <span className="hidden sm:inline">Leave</span>
+            <span className="sm:hidden text-[13px]">✕</span>
           </button>
         </div>
       </div>
 
-      {/* Message Feed Canvas with premium tiled wallpaper */}
+      {/* Message Feed — flex fills remaining space, scrollable */}
       <div 
-        className="flex-1 overflow-y-auto px-6 py-4 flex flex-col space-y-4 relative"
+        className="chat-feed px-3 sm:px-5 py-4 flex flex-col space-y-4 relative"
         style={{
           background: "radial-gradient(circle at top right, rgba(16, 185, 129, 0.02), transparent 400px), radial-gradient(circle at bottom left, rgba(30, 41, 59, 0.04), transparent 400px), #040813",
           backgroundImage: `radial-gradient(circle at 50% -20%, rgba(16, 185, 129, 0.03), transparent 50%), url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23ffffff' fill-opacity='0.012'%3E%3Cpath d='M0 0h40v40H0V0zm40 40h40v40H40V40zm0-40h2v2h-2V0zm0 4h2v2h-2V4zm0 4h2v2h-2V8zm0 12h2v2h-2v-2zm0 12h2v2h-2v-2zm0 24h2v2h-2v-2zm0 12h2v2h-2v-2zm4-68h2v2h-2v-2zm8 0h2v2h-2v-2zm12 0h2v2h-2v-2zm12 0h2v2h-2v-2zm8 0h2v2h-2v-2zm-60 8h2v2h-2V8zm0 8h2v2h-2v-2zm0 12h2v2h-2v-2zm0 16h2v2h-2v-2zm0 12h2v2h-2v-2zm0 8h2v2h-2v-2zm8 32h2v2h-2v-2zm16 0h2v2h-2v-2zm16 0h2v2h-2v-2zm16 0h2v2h-2v-2z'/%3E%3C/g%3E%3C/svg%3E")`
@@ -1035,8 +1056,8 @@ export default function ChatContainer({
         accept="image/*"
       />
 
-      {/* Dynamic Input Panel */}
-      <div className="px-6 py-4 bg-[#050914] border-t border-white/[0.04] relative">
+      {/* Dynamic Input Panel — always above keyboard, safe-area aware */}
+      <div className="chat-input-bar px-3 sm:px-5 pt-3 bg-[#050914] border-t border-white/[0.04] relative">
         <AnimatePresence mode="wait">
           {isRecording ? (
             /* Voice Note Recording Console */
