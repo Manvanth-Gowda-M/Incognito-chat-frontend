@@ -19,7 +19,9 @@ export type ConnectionState = "connecting" | "waiting" | "ready" | "full" | "dis
 export function useSocket(
   roomId: string | undefined,
   nickname: string | null,
-  onWebRTCSignal?: (payload: { senderId: string; signal: any }) => void
+  onWebRTCSignal?: (payload: { senderId: string; signal: any }) => void,
+  onPeerJoined?: (peerId: string, nickname: string) => void,
+  onPeerLeft?: (peerId: string, nickname: string) => void
 ) {
   const socketRef = useRef<Socket | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
@@ -38,9 +40,20 @@ export function useSocket(
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const onWebRTCSignalRef = useRef(onWebRTCSignal);
+  const onPeerJoinedRef = useRef(onPeerJoined);
+  const onPeerLeftRef = useRef(onPeerLeft);
+
   useEffect(() => {
     onWebRTCSignalRef.current = onWebRTCSignal;
-  }, [onWebRTCSignal]);
+    onPeerJoinedRef.current = onPeerJoined;
+    onPeerLeftRef.current = onPeerLeft;
+  }, [onWebRTCSignal, onPeerJoined, onPeerLeft]);
+
+  // Keep a ref of peers for direct synchronous lookup inside event handlers
+  const peersRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    peersRef.current = peers;
+  }, [peers]);
 
   useEffect(() => {
     if (!roomId || !nickname) return;
@@ -80,6 +93,9 @@ export function useSocket(
       setPeerId(peerId);
       setPeerNickname(name);
       setPeers((prev) => ({ ...prev, [peerId]: name }));
+      if (onPeerJoinedRef.current) {
+        onPeerJoinedRef.current(peerId, name);
+      }
     });
 
     socket.on("room-ready", ({ nicknames }: { nicknames?: Record<string, string> }) => {
@@ -146,6 +162,7 @@ export function useSocket(
 
     socket.on("peer-left", ({ peerId: leftPeerId }: { peerId?: string }) => {
       if (leftPeerId) {
+        const nameOfLeftPeer = peersRef.current[leftPeerId] || "Secure Partner";
         setPeers((prev) => {
           const updated = { ...prev };
           delete updated[leftPeerId];
@@ -156,14 +173,22 @@ export function useSocket(
           delete updated[leftPeerId];
           return updated;
         });
+        if (onPeerLeftRef.current) {
+          onPeerLeftRef.current(leftPeerId, nameOfLeftPeer);
+        }
       } else {
         // Fallback for private rooms / old server payloads
+        const nameOfLeftPeer = peerNickname || "Secure Partner";
+        const targetPeerId = peerId || "";
         setConnectionState("waiting");
         setPeerId(null);
         setPeerNickname(null);
         setPeers({});
         setTypingPeers({});
         setIsPeerTyping(false);
+        if (onPeerLeftRef.current) {
+          onPeerLeftRef.current(targetPeerId, nameOfLeftPeer);
+        }
       }
     });
 

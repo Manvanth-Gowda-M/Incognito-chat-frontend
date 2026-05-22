@@ -60,6 +60,39 @@ export default function RoomPage() {
     onWebRTCSignalRef.current(payload);
   }, []);
 
+  // Callbacks for inline join/leave system message notifications
+  const handlePeerJoined = useCallback((peerId: string, peerName: string) => {
+    const systemMsg: Message = {
+      id: `system-join-${peerId}-${Date.now()}`,
+      sender: "system",
+      text: `${peerName} joined the chat`,
+      timestamp: Date.now(),
+      read: true,
+    };
+    setMessages((prev) => {
+      // Avoid duplicate join messages if they fast-reconnect
+      const exists = prev.some(m => m.sender === "system" && m.text === systemMsg.text && Date.now() - m.timestamp < 3000);
+      if (exists) return prev;
+      return [...prev, systemMsg];
+    });
+  }, []);
+
+  const handlePeerLeft = useCallback((peerId: string, peerName: string) => {
+    const systemMsg: Message = {
+      id: `system-leave-${peerId}-${Date.now()}`,
+      sender: "system",
+      text: `${peerName} left the chat`,
+      timestamp: Date.now(),
+      read: true,
+    };
+    setMessages((prev) => {
+      // Avoid duplicate leave messages if they fast-reconnect
+      const exists = prev.some(m => m.sender === "system" && m.text === systemMsg.text && Date.now() - m.timestamp < 3000);
+      if (exists) return prev;
+      return [...prev, systemMsg];
+    });
+  }, []);
+
   const {
     connectionState,
     isPeerTyping,
@@ -75,7 +108,7 @@ export default function RoomPage() {
     sendReadReceipt,
     sendWebRTCSignal,
     leaveRoom
-  } = useSocket(roomId, nickname, onWebRTCSignal);
+  } = useSocket(roomId, nickname, onWebRTCSignal, handlePeerJoined, handlePeerLeft);
 
   // WebRTC Call State
   const [callState, setCallState] = useState<"idle" | "dialing" | "ringing" | "connecting" | "connected">("idle");

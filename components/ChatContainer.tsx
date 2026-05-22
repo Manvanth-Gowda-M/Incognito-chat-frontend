@@ -51,7 +51,7 @@ function VideoFeed({ stream, isMuted, className }: { stream: MediaStream | null;
 
 export interface Message {
   id: string;
-  sender: "me" | "peer";
+  sender: "me" | "peer" | "system";
   senderId?: string;
   text: string;
   timestamp: number;
@@ -606,6 +606,23 @@ export default function ChatContainer({
         ) : (
           <AnimatePresence initial={false}>
             {messages.map((msg) => {
+              if (msg.sender === "system") {
+                return (
+                  <motion.div
+                    key={msg.id}
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="flex justify-center relative z-10 my-1"
+                  >
+                    <div className="px-4 py-1.5 rounded-full bg-white/[0.02] border border-white/5 backdrop-blur-md text-[10px] sm:text-[11px] text-slate-400 font-medium font-mono tracking-wide flex items-center gap-1.5 shadow-sm">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/50 animate-pulse" />
+                      {msg.text}
+                    </div>
+                  </motion.div>
+                );
+              }
+
               const isMe = msg.sender === "me";
               const senderName = isMe 
                 ? (myNickname || "Me") 
